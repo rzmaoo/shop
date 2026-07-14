@@ -23,6 +23,12 @@ class EconomyConfigSyntaxTest {
             assertThat(((Number) config.get("schemaVersion")).intValue()).isEqualTo(1);
             assertThat((String) config.get("logTimeZone")).isEqualTo("Asia/Shanghai");
             assertThat((List<?>) config.get("prices")).isEmpty();
+            assertThat((String) config.get("sounds.sellSuccess")).isEqualTo("minecraft:entity.player.levelup");
+            assertThat((String) config.get("sounds.sellFailed")).isEqualTo("minecraft:entity.villager.no");
+            assertThat((String) config.get("sounds.depositSuccess")).isEqualTo("minecraft:entity.experience_orb.pickup");
+            assertThat((String) config.get("sounds.withdrawSuccess")).isEqualTo("minecraft:entity.item.pickup");
+            assertThat(((Number) config.get("sounds.volume")).doubleValue()).isEqualTo(1.0);
+            assertThat(((Number) config.get("sounds.pitch")).doubleValue()).isEqualTo(1.0);
             assertThat(((Number) config.get("backup.intervalSeconds")).intValue()).isEqualTo(300);
             assertThat((String) config.get("backup.directory")).isEqualTo("backup");
             assertThat((String) config.get("atm.item")).isEqualTo("minecraft:gold_ingot");

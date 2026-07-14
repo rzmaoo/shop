@@ -45,9 +45,11 @@ public final class ShopMenu extends EconomyMenu {
             applyCommittedState(emptySlots(before));
             player.sendSystemMessage(ShopText.text("shop.message.sell_success", Money.format(change.delta()),
                     Money.format(change.after())).withStyle(ChatFormatting.GREEN));
+            playConfiguredSound(service.config().sounds().sellSuccess());
         } catch (SQLException | IOException ex) {
             service.auditRejected(player, "SHOP_SELL", ex.getMessage(), "确认出售失败");
             player.sendSystemMessage(ShopText.text("shop.message.sell_failed", ex.getMessage()).withStyle(ChatFormatting.RED));
+            playConfiguredSound(service.config().sounds().sellFailed());
             try {
                 applyCommittedState(service.database().loadMenu(player.getUUID(), MenuKind.SHOP));
             } catch (Exception reloadFailure) {

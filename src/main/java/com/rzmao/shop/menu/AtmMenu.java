@@ -48,9 +48,11 @@ public final class AtmMenu extends EconomyMenu {
             applyCommittedState(emptySlots(before));
             player.sendSystemMessage(ShopText.text("shop.atm.message.deposit_success", Money.format(change.delta()),
                     Money.format(change.after())).withStyle(ChatFormatting.GREEN));
+            playConfiguredSound(service.config().sounds().depositSuccess());
         } catch (SQLException | IOException ex) {
             service.auditRejected(player, "ATM_DEPOSIT", ex.getMessage(), "确认存入失败");
             player.sendSystemMessage(ShopText.text("shop.atm.message.deposit_failed", ex.getMessage()).withStyle(ChatFormatting.RED));
+            playConfiguredSound(service.config().sounds().depositFailed());
             try {
                 applyCommittedState(service.database().loadMenu(player.getUUID(), MenuKind.ATM));
             } catch (Exception reloadFailure) {
@@ -70,11 +72,13 @@ public final class AtmMenu extends EconomyMenu {
             EconomyDatabase.PendingDelivery delivery = service.withdraw(player, count);
             player.sendSystemMessage(ShopText.text("shop.atm.message.withdraw_success", count,
                     Money.format(delivery.cost())).withStyle(ChatFormatting.GREEN));
+            playConfiguredSound(service.config().sounds().withdrawSuccess());
             refreshControls();
             broadcastChanges();
         } catch (SQLException | IOException ex) {
             service.auditRejected(player, "ATM_WITHDRAW", ex.getMessage(), "数量=" + count);
             player.sendSystemMessage(ShopText.text("shop.atm.message.withdraw_failed", ex.getMessage()).withStyle(ChatFormatting.RED));
+            playConfiguredSound(service.config().sounds().withdrawFailed());
         }
     }
 

@@ -6,6 +6,8 @@ import com.rzmao.shop.storage.MenuState;
 import com.rzmao.shop.text.ShopText;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
@@ -197,6 +199,11 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
 
     protected final void setControl(int guiSlot, ItemStack stack) {
         controls.setItem(guiSlot - kind.inputSlots(), stack);
+    }
+
+    protected final void playConfiguredSound(SoundEvent sound) {
+        var sounds = service.config().sounds();
+        player.playNotifySound(sound, SoundSource.PLAYERS, sounds.volume(), sounds.pitch());
     }
 
     protected abstract boolean isAccepted(ItemStack stack);

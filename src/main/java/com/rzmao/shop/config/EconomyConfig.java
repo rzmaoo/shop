@@ -4,6 +4,7 @@ import com.electronwill.nightconfig.core.Config;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
 import com.rzmao.shop.money.Money;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -68,6 +69,26 @@ public final class EconomyConfig {
               # { item = "minecraft:diamond", price = "25.00" },
               # { item = "minecraft:emerald", price = "10.00" },
             ]
+
+            # 操作反馈音效（必须填写原版或已安装 Mod 注册的声音事件 ID）
+            # 修改后可使用 /shop reload 立即生效
+            [sounds]
+            # 出售成功时
+            sellSuccess = "minecraft:entity.player.levelup"
+            # 出售失败时
+            sellFailed = "minecraft:entity.villager.no"
+            # ATM 存入成功时
+            depositSuccess = "minecraft:entity.experience_orb.pickup"
+            # ATM 存入失败时
+            depositFailed = "minecraft:entity.villager.no"
+            # ATM 取出成功时
+            withdrawSuccess = "minecraft:entity.item.pickup"
+            # ATM 取出失败时
+            withdrawFailed = "minecraft:entity.villager.no"
+            # 上述所有音效的音量
+            volume = 1.0
+            # 上述所有音效的音调
+            pitch = 1.0
 
             # 自动备份设置
             # 备份内容：每个玩家的虚拟币余额，文件名按前面指定的时区生成
@@ -145,6 +166,15 @@ public final class EconomyConfig {
             ZoneId logTimeZone = parseZone(optional(file, "logTimeZone", String.class).orElse("Asia/Shanghai"));
             long backupIntervalSeconds = parseBackupInterval(optional(file, "backup.intervalSeconds", Number.class).orElse(300));
             String backupDirectory = parseBackupDirectory(optional(file, "backup.directory", String.class).orElse("backup"));
+            SoundSettings sounds = new SoundSettings(
+                    parseSound(optional(file, "sounds.sellSuccess", String.class).orElse("minecraft:entity.player.levelup"), "出售成功音效"),
+                    parseSound(optional(file, "sounds.sellFailed", String.class).orElse("minecraft:entity.villager.no"), "出售失败音效"),
+                    parseSound(optional(file, "sounds.depositSuccess", String.class).orElse("minecraft:entity.experience_orb.pickup"), "存入成功音效"),
+                    parseSound(optional(file, "sounds.depositFailed", String.class).orElse("minecraft:entity.villager.no"), "存入失败音效"),
+                    parseSound(optional(file, "sounds.withdrawSuccess", String.class).orElse("minecraft:entity.item.pickup"), "取出成功音效"),
+                    parseSound(optional(file, "sounds.withdrawFailed", String.class).orElse("minecraft:entity.villager.no"), "取出失败音效"),
+                    parseSoundNumber(optional(file, "sounds.volume", Number.class).orElse(1.0), "sounds.volume"),
+                    parseSoundNumber(optional(file, "sounds.pitch", Number.class).orElse(1.0), "sounds.pitch"));
             ResourceLocation atmId = parseId(require(file, "atm.item", String.class), "ATM 物品");
             Item atmItem = requireRegisteredItem(atmId, "ATM 物品");
             long atmValue = Money.parse(require(file, "atm.valuePerItem", String.class), false);
@@ -191,7 +221,7 @@ public final class EconomyConfig {
             if (atmShopPrice != null && atmShopPrice > atmValue) {
                 throw new IllegalArgumentException("ATM 物品的出售价格不能高于兑换价值，否则会产生无限套利: " + atmId);
             }
-            return new Snapshot(maxBalance, logTimeZone, backupIntervalSeconds, backupDirectory,
+            return new Snapshot(maxBalance, logTimeZone, backupIntervalSeconds, backupDirectory, sounds,
                     atmId, atmItem, atmValue, Collections.unmodifiableMap(prices));
         } catch (RuntimeException ex) {
             throw new IOException("配置校验失败: " + ex.getMessage(), ex);
@@ -212,6 +242,23 @@ public final class EconomyConfig {
         } catch (DateTimeException ex) {
             throw new IllegalArgumentException("logTimeZone 不是有效时区: " + value, ex);
         }
+    }
+
+    private static SoundEvent parseSound(String value, String label) {
+        ResourceLocation id = parseId(value, label);
+        SoundEvent sound = ForgeRegistries.SOUND_EVENTS.getValue(id);
+        if (sound == null) {
+            throw new IllegalArgumentException(label + "不存在: " + id);
+        }
+        return sound;
+    }
+
+    private static float parseSoundNumber(Number value, String key) {
+        double number = value.doubleValue();
+        if (!Double.isFinite(number) || number <= 0.0 || number > 2.0) {
+            throw new IllegalArgumentException(key + " 必须大于 0 且不能大于 2");
+        }
+        return (float) number;
     }
 
     private static long parseBackupInterval(Number value) {
@@ -268,11 +315,12 @@ public final class EconomyConfig {
     }
 
     public record Snapshot(long maxBalance, ZoneId logTimeZone, long backupIntervalSeconds,
-                           String backupDirectory, ResourceLocation atmItemId, Item atmItem,
+                           String backupDirectory, SoundSettings sounds, ResourceLocation atmItemId, Item atmItem,
                            long atmValuePerItem, Map<ResourceLocation, Long> prices) {
         public Snapshot {
             Objects.requireNonNull(logTimeZone);
             Objects.requireNonNull(backupDirectory);
+            Objects.requireNonNull(sounds);
             Objects.requireNonNull(atmItemId);
             Objects.requireNonNull(atmItem);
             prices = Map.copyOf(prices);
@@ -286,6 +334,20 @@ public final class EconomyConfig {
 
         public boolean isAtmItem(ItemStack stack) {
             return !stack.isEmpty() && stack.is(atmItem);
+        }
+    }
+
+    public record SoundSettings(SoundEvent sellSuccess, SoundEvent sellFailed,
+                                SoundEvent depositSuccess, SoundEvent depositFailed,
+                                SoundEvent withdrawSuccess, SoundEvent withdrawFailed,
+                                float volume, float pitch) {
+        public SoundSettings {
+            Objects.requireNonNull(sellSuccess);
+            Objects.requireNonNull(sellFailed);
+            Objects.requireNonNull(depositSuccess);
+            Objects.requireNonNull(depositFailed);
+            Objects.requireNonNull(withdrawSuccess);
+            Objects.requireNonNull(withdrawFailed);
         }
     }
 }
