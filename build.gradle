@@ -115,7 +115,10 @@ tasks.named('processResources', ProcessResources).configure {
 }
 
 tasks.named('jar', Jar).configure {
-    archiveClassifier = 'slim'
+    // Mohist already provides sqlite-jdbc. Keep the default artifact free of a
+    // second JPMS module with the same name, otherwise Mohist fails before mods
+    // are constructed with a java.lang.module.ResolutionException.
+    archiveClassifier = ''
     manifest {
         attributes(
                 'Specification-Title': mod_id,
@@ -131,7 +134,8 @@ tasks.named('jar', Jar).configure {
 }
 
 tasks.named('jarJar').configure {
-    archiveClassifier = ''
+    // Pure Forge installations can use this self-contained variant.
+    archiveClassifier = 'standalone'
     finalizedBy 'reobfJarJar'
 }
 
