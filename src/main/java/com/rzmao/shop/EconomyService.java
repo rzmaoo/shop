@@ -1,5 +1,6 @@
 package com.rzmao.shop;
 
+import com.rzmao.shop.api.DeathPenaltyKiller;
 import com.rzmao.shop.config.EconomyConfig;
 import com.rzmao.shop.menu.AtmMenu;
 import com.rzmao.shop.menu.EconomyMenu;
@@ -31,6 +32,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -187,6 +189,22 @@ public final class EconomyService implements AutoCloseable {
 
     public long balance(UUID player) throws SQLException {
         return database.balance(player);
+    }
+
+    public Optional<EconomyDatabase.DeathPenaltyResult> applyDeathPenalty(ServerPlayer victim,
+                                                                           DeathPenaltyKiller killer,
+                                                                           String damageType) throws SQLException {
+        EconomyConfig.Snapshot snapshot = config();
+        EconomyConfig.DeathPenaltySettings settings = snapshot.deathPenalty();
+        if (!settings.enabled()) {
+            return Optional.empty();
+        }
+        return Optional.of(database.applyDeathPenalty(
+                victim.getUUID(), victim.getGameProfile().getName(),
+                killer == null ? null : killer.uuid(), killer == null ? null : killer.name(),
+                settings.ratio(), snapshot.maxBalance(), damageType,
+                AuditContext.death(victim, killer == null ? null : killer.uuid(),
+                        killer == null ? null : killer.name())));
     }
 
     public EconomyConfig.Snapshot reload() throws IOException {

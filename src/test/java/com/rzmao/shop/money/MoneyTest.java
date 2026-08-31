@@ -2,6 +2,8 @@ package com.rzmao.shop.money;
 
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -28,5 +30,14 @@ class MoneyTest {
     void detectsMultiplicationOverflow() {
         assertThat(Money.multiply(125, 8)).isEqualTo(1_000);
         assertThatThrownBy(() -> Money.multiply(Long.MAX_VALUE, 2)).isInstanceOf(ArithmeticException.class);
+    }
+
+    @Test
+    void calculatesRatioUsingMinorUnitsAndRoundsDown() {
+        assertThat(Money.fractionOf(12_345, new BigDecimal("0.10"))).isEqualTo(1_234);
+        assertThat(Money.fractionOf(1, new BigDecimal("0.10"))).isZero();
+        assertThat(Money.fractionOf(Long.MAX_VALUE, BigDecimal.ONE)).isEqualTo(Long.MAX_VALUE);
+        assertThatThrownBy(() -> Money.fractionOf(100, new BigDecimal("1.01")))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

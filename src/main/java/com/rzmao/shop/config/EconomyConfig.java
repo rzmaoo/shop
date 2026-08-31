@@ -12,6 +12,7 @@ import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraftforge.registries.ForgeRegistries;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.InvalidPathException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -109,6 +110,18 @@ public final class EconomyConfig {
 
             # 每个实体货币物品对应多少虚拟币，默认是1:1兑换，不能大于maxBalance。
             valuePerItem = "1.00"
+
+            # 玩家死亡扣款设置
+            # 扣款金额按死亡瞬间的余额计算，并向下取整到最小货币单位（0.01）。
+            # 自动识别原版、常规模组弹射物/宠物主人，以及混合端插件提供的玩家击杀者。
+            # 外部模组还可以通过 DeathPenaltyEvent 覆盖击杀归属；无玩家击杀者时直接扣除。
+            # 击杀者余额达到 maxBalance 时，无法转入的部分也会被直接扣除。
+            [deathPenalty]
+            # 是否开启玩家死亡扣款，默认关闭。
+            enabled = false
+
+            # 扣除余额的比例，必须大于 0 且不能大于 1；0.10 表示 10%。
+            ratio = 0.10
             """;
 
     private final Path path;
@@ -166,6 +179,9 @@ public final class EconomyConfig {
             ZoneId logTimeZone = parseZone(optional(file, "logTimeZone", String.class).orElse("Asia/Shanghai"));
             long backupIntervalSeconds = parseBackupInterval(optional(file, "backup.intervalSeconds", Number.class).orElse(300));
             String backupDirectory = parseBackupDirectory(optional(file, "backup.directory", String.class).orElse("backup"));
+            DeathPenaltySettings deathPenalty = new DeathPenaltySettings(
+                    optional(file, "deathPenalty.enabled", Boolean.class).orElse(false),
+                    parseDeathPenaltyRatio(optional(file, "deathPenalty.ratio", Number.class).orElse(0.10)));
             SoundSettings sounds = new SoundSettings(
                     parseSound(optional(file, "sounds.sellSuccess", String.class).orElse("minecraft:entity.player.levelup"), "出售成功音效"),
                     parseSound(optional(file, "sounds.sellFailed", String.class).orElse("minecraft:entity.villager.no"), "出售失败音效"),
@@ -221,7 +237,7 @@ public final class EconomyConfig {
             if (atmShopPrice != null && atmShopPrice > atmValue) {
                 throw new IllegalArgumentException("ATM 物品的出售价格不能高于兑换价值，否则会产生无限套利: " + atmId);
             }
-            return new Snapshot(maxBalance, logTimeZone, backupIntervalSeconds, backupDirectory, sounds,
+            return new Snapshot(maxBalance, logTimeZone, backupIntervalSeconds, backupDirectory, deathPenalty, sounds,
                     atmId, atmItem, atmValue, Collections.unmodifiableMap(prices));
         } catch (RuntimeException ex) {
             throw new IOException("配置校验失败: " + ex.getMessage(), ex);
@@ -273,6 +289,23 @@ public final class EconomyConfig {
         return seconds;
     }
 
+    private static BigDecimal parseDeathPenaltyRatio(Number value) {
+        double approximate = value.doubleValue();
+        if (!Double.isFinite(approximate)) {
+            throw new IllegalArgumentException("deathPenalty.ratio 必须是有限数字");
+        }
+        final BigDecimal ratio;
+        try {
+            ratio = new BigDecimal(value.toString()).stripTrailingZeros();
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("deathPenalty.ratio 不是有效比例: " + value, ex);
+        }
+        if (ratio.signum() <= 0 || ratio.compareTo(BigDecimal.ONE) > 0) {
+            throw new IllegalArgumentException("deathPenalty.ratio 必须大于 0 且不能大于 1");
+        }
+        return ratio;
+    }
+
     private static String parseBackupDirectory(String value) {
         String directory = value == null ? "" : value.trim();
         if (directory.isEmpty()) {
@@ -315,11 +348,13 @@ public final class EconomyConfig {
     }
 
     public record Snapshot(long maxBalance, ZoneId logTimeZone, long backupIntervalSeconds,
-                           String backupDirectory, SoundSettings sounds, ResourceLocation atmItemId, Item atmItem,
-                           long atmValuePerItem, Map<ResourceLocation, Long> prices) {
+                           String backupDirectory, DeathPenaltySettings deathPenalty, SoundSettings sounds,
+                           ResourceLocation atmItemId, Item atmItem, long atmValuePerItem,
+                           Map<ResourceLocation, Long> prices) {
         public Snapshot {
             Objects.requireNonNull(logTimeZone);
             Objects.requireNonNull(backupDirectory);
+            Objects.requireNonNull(deathPenalty);
             Objects.requireNonNull(sounds);
             Objects.requireNonNull(atmItemId);
             Objects.requireNonNull(atmItem);
@@ -334,6 +369,19 @@ public final class EconomyConfig {
 
         public boolean isAtmItem(ItemStack stack) {
             return !stack.isEmpty() && stack.is(atmItem);
+        }
+    }
+
+    public record DeathPenaltySettings(boolean enabled, BigDecimal ratio) {
+        public DeathPenaltySettings {
+            Objects.requireNonNull(ratio);
+            if (ratio.signum() <= 0 || ratio.compareTo(BigDecimal.ONE) > 0) {
+                throw new IllegalArgumentException("死亡扣款比例必须大于 0 且不能大于 1");
+            }
+        }
+
+        public String percentageText() {
+            return ratio.movePointRight(2).stripTrailingZeros().toPlainString() + "%";
         }
     }
 

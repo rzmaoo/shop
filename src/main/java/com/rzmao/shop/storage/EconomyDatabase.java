@@ -9,6 +9,7 @@ import net.minecraftforge.registries.ForgeRegistries;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -194,6 +195,82 @@ public final class EconomyDatabase implements AutoCloseable {
                 return result.next() ? result.getLong(1) : 0L;
             }
         }
+    }
+
+    public synchronized DeathPenaltyResult applyDeathPenalty(UUID victimUuid, String victimName,
+                                                              UUID killerUuid, String killerName,
+                                                              BigDecimal ratio, long maxBalance,
+                                                              String damageType, AuditContext context) throws SQLException {
+        Objects.requireNonNull(victimUuid, "victimUuid");
+        Objects.requireNonNull(victimName, "victimName");
+        Objects.requireNonNull(ratio, "ratio");
+        Objects.requireNonNull(context, "context");
+        if (ratio.signum() <= 0 || ratio.compareTo(BigDecimal.ONE) > 0) {
+            throw new IllegalArgumentException("死亡扣款比例必须大于 0 且不能大于 1");
+        }
+        if (maxBalance <= 0) {
+            throw new IllegalArgumentException("最大余额必须大于 0");
+        }
+
+        boolean hasKiller = killerUuid != null && !killerUuid.equals(victimUuid);
+        UUID creditedKillerUuid = hasKiller ? killerUuid : null;
+        String creditedKillerName = hasKiller ? Objects.requireNonNull(killerName, "killerName") : null;
+        String recordedDamageType = damageType == null || damageType.isBlank() ? "unknown" : damageType;
+        String ratioText = ratio.movePointRight(2).stripTrailingZeros().toPlainString() + "%";
+
+        return inTransaction(() -> {
+            upsertPlayerTx(victimUuid, victimName);
+            if (creditedKillerUuid != null) {
+                upsertPlayerTx(creditedKillerUuid, creditedKillerName);
+            }
+
+            long victimBefore = balanceTx(victimUuid);
+            Long killerBefore = creditedKillerUuid == null ? null : balanceTx(creditedKillerUuid);
+            long deducted = Money.fractionOf(victimBefore, ratio);
+            if (deducted == 0) {
+                return new DeathPenaltyResult(null, victimBefore, victimBefore, 0, 0,
+                        killerBefore, killerBefore);
+            }
+
+            long victimAfter = victimBefore - deducted;
+            long rewarded = 0;
+            Long killerAfter = null;
+            if (killerBefore != null) {
+                long capacity = killerBefore >= maxBalance ? 0 : maxBalance - killerBefore;
+                rewarded = Math.min(deducted, capacity);
+                killerAfter = Math.addExact(killerBefore, rewarded);
+            }
+
+            String operationId = UUID.randomUUID().toString();
+            updateBalanceTx(victimUuid, victimAfter);
+            insertTransactionTx(operationId + "-penalty", victimUuid, "DEATH_PENALTY", "COMMITTED",
+                    -deducted, null, 0);
+
+            long removed = deducted - rewarded;
+            String victimDetails = "死亡扣款；比例=" + ratioText + "；伤害类型=" + recordedDamageType
+                    + (creditedKillerUuid == null
+                    ? "；无玩家击杀者；直接扣除=" + Money.format(removed)
+                    : "；击杀者=" + creditedKillerName + "；转账=" + Money.format(rewarded)
+                    + "；直接扣除=" + Money.format(removed));
+            insertAuditTx(operationId, victimUuid, "DEATH_PENALTY", "SUCCESS", null,
+                    victimBefore, victimAfter, -deducted, null, null, victimDetails, context);
+
+            if (creditedKillerUuid != null) {
+                if (rewarded > 0) {
+                    updateBalanceTx(creditedKillerUuid, killerAfter);
+                    insertTransactionTx(operationId + "-reward", creditedKillerUuid, "DEATH_REWARD",
+                            "COMMITTED", rewarded, null, 0);
+                }
+                String reason = rewarded < deducted ? "余额上限限制，部分奖励未入账" : null;
+                String killerDetails = "击杀玩家=" + victimName + "；死亡扣款=" + Money.format(deducted)
+                        + "；实际入账=" + Money.format(rewarded) + "；余额上限=" + Money.format(maxBalance);
+                insertAuditTx(operationId, creditedKillerUuid, "DEATH_REWARD", "SUCCESS", reason,
+                        killerBefore, killerAfter, rewarded, null, null, killerDetails, context);
+            }
+
+            return new DeathPenaltyResult(operationId, victimBefore, victimAfter, deducted, rewarded,
+                    killerBefore, killerAfter);
+        });
     }
 
     public synchronized MenuState loadMenu(UUID player, MenuKind kind) throws SQLException, IOException {
@@ -693,6 +770,13 @@ public final class EconomyDatabase implements AutoCloseable {
     public enum Recovery { NONE, KEPT_AFTER_STATE, RESTORED_BEFORE_STATE }
 
     public record BalanceChange(String operationId, long before, long after, long delta) {}
+
+    public record DeathPenaltyResult(String operationId, long victimBefore, long victimAfter,
+                                     long deducted, long rewarded, Long killerBefore, Long killerAfter) {
+        public long removed() {
+            return deducted - rewarded;
+        }
+    }
 
     public record PendingDelivery(String id, ItemStack item, int count, long cost) {}
 

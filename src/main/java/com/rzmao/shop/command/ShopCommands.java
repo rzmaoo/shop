@@ -105,12 +105,15 @@ public final class ShopCommands {
             var snapshot = wasDisabled ? service.config() : service.reload();
             try {
                 service.database().audit(null, "CONFIG_RELOAD", "SUCCESS", null,
-                        "价格条目=" + snapshot.prices().size() + ", ATM=" + snapshot.atmItemId(), AuditContext.source(context.getSource()));
+                        "价格条目=" + snapshot.prices().size() + ", ATM=" + snapshot.atmItemId()
+                                + ", 死亡扣款=" + snapshot.deathPenalty().enabled()
+                                + ", 比例=" + snapshot.deathPenalty().percentageText(), AuditContext.source(context.getSource()));
             } catch (Exception auditFailure) {
                 context.getSource().sendFailure(ShopText.text("shop.command.audit_failed", auditFailure.getMessage()));
             }
             context.getSource().sendSuccess(() -> ShopText.text("shop.command.reload_success", snapshot.prices().size(),
-                    snapshot.atmItemId(), Money.format(snapshot.atmValuePerItem()), snapshot.logTimeZone())
+                    snapshot.atmItemId(), Money.format(snapshot.atmValuePerItem()), snapshot.logTimeZone(),
+                    snapshot.deathPenalty().enabled() ? "开启" : "关闭", snapshot.deathPenalty().percentageText())
                     .withStyle(ChatFormatting.GREEN), true);
             return 1;
         } catch (Exception ex) {

@@ -33,6 +33,8 @@ class EconomyConfigSyntaxTest {
             assertThat((String) config.get("backup.directory")).isEqualTo("backup");
             assertThat((String) config.get("atm.item")).isEqualTo("minecraft:gold_ingot");
             assertThat((String) config.get("atm.valuePerItem")).isEqualTo("1.00");
+            assertThat((Boolean) config.get("deathPenalty.enabled")).isFalse();
+            assertThat(((Number) config.get("deathPenalty.ratio")).doubleValue()).isEqualTo(0.10);
         }
     }
 

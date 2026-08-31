@@ -3,6 +3,7 @@ package com.rzmao.shop.money;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.regex.Pattern;
 
 public final class Money {
@@ -36,6 +37,18 @@ public final class Money {
             throw new IllegalArgumentException("金额和数量不能为负数");
         }
         return Math.multiplyExact(unitPrice, (long) count);
+    }
+
+    public static long fractionOf(long amount, BigDecimal ratio) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("金额不能为负数");
+        }
+        Objects.requireNonNull(ratio, "ratio");
+        if (ratio.signum() < 0 || ratio.compareTo(BigDecimal.ONE) > 0) {
+            throw new IllegalArgumentException("比例必须在 0 到 1 之间");
+        }
+        return BigDecimal.valueOf(amount).multiply(ratio)
+                .setScale(0, RoundingMode.DOWN).longValueExact();
     }
 
     public static String normalize(String value) {
