@@ -1,0 +1,25 @@
+// 仅在显式使用 -I integration/build-tests.gradle 时生成验证模组。
+gradle.projectsEvaluated {
+    def project = gradle.rootProject
+    project.with {
+        sourceSets {
+            compatTest {
+                java.srcDir 'integration/src'
+                resources.srcDir 'integration/resources'
+                compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+                runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+            }
+        }
+        tasks.register('compatTestJar', Jar) {
+            from sourceSets.compatTest.output
+            archiveFileName = 'shop-compat-tests.jar'
+            destinationDirectory = layout.buildDirectory.dir('compat-tests')
+            finalizedBy 'reobfCompatTestJar'
+        }
+        reobf {
+            compatTestJar {
+                classpath.from sourceSets.main.output, sourceSets.main.compileClasspath
+            }
+        }
+    }
+}

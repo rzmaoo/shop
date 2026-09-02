@@ -2,6 +2,8 @@ package com.rzmao.shop;
 
 import com.rzmao.shop.api.DeathPenaltyKiller;
 import com.rzmao.shop.config.EconomyConfig;
+import com.rzmao.shop.compat.InoriLootCompatibility;
+import com.rzmao.shop.compat.InoriLootItems;
 import com.rzmao.shop.menu.AtmMenu;
 import com.rzmao.shop.menu.EconomyMenu;
 import com.rzmao.shop.menu.ShopMenu;
@@ -64,6 +66,7 @@ public final class EconomyService implements AutoCloseable {
     }
 
     public static EconomyService start(MinecraftServer server) throws IOException, SQLException {
+        InoriLootCompatibility.initialize();
         EconomyConfig config = new EconomyConfig();
         config.loadInitial();
         EconomyDatabase database = EconomyDatabase.open(server);
@@ -86,6 +89,7 @@ public final class EconomyService implements AutoCloseable {
         database.audit(player.getUUID(), "SHOP_OPEN", "SUCCESS", null, "打开出售界面", AuditContext.player(player));
         player.openMenu(new SimpleMenuProvider((id, inventory, ignored) -> new ShopMenu(id, inventory, this, state),
                 ShopText.text("shop.title.sell")));
+        if (player.containerMenu instanceof ShopMenu menu) menu.initializeGrid();
     }
 
     public void openAtm(ServerPlayer player) throws SQLException, IOException {
@@ -94,6 +98,7 @@ public final class EconomyService implements AutoCloseable {
         database.audit(player.getUUID(), "ATM_OPEN", "SUCCESS", null, "打开 ATM 界面", AuditContext.player(player));
         player.openMenu(new SimpleMenuProvider((id, inventory, ignored) -> new AtmMenu(id, inventory, this, state),
                 ShopText.text("shop.title.atm")));
+        if (player.containerMenu instanceof AtmMenu menu) menu.initializeGrid();
     }
 
     public void preparePlayer(ServerPlayer player) throws SQLException, IOException {
@@ -271,7 +276,8 @@ public final class EconomyService implements AutoCloseable {
         while (!remaining.isEmpty()) {
             int amount = Math.min(remaining.getCount(), remaining.getMaxStackSize());
             ItemStack part = remaining.split(amount);
-            if (!player.getInventory().add(part) || !part.isEmpty()) {
+            addToInventory(player.getInventory(), part);
+            if (!part.isEmpty()) {
                 throw new SQLException("背包预检与实际发放不一致");
             }
         }
@@ -289,6 +295,7 @@ public final class EconomyService implements AutoCloseable {
     }
 
     public static boolean canFit(Inventory inventory, ItemStack requested) {
+        if (InoriLootCompatibility.enabled()) return InoriLootCompatibility.canFit(inventory, requested);
         int remaining = requested.getCount();
         for (ItemStack existing : inventory.items) {
             if (!existing.isEmpty() && ItemStack.isSameItemSameTags(existing, requested)) {
@@ -303,6 +310,21 @@ public final class EconomyService implements AutoCloseable {
             }
         }
         return remaining <= 0;
+    }
+
+    public static void addToInventory(Inventory inventory, ItemStack stack) {
+        if (!InoriLootCompatibility.enabled()) {
+            inventory.add(stack);
+            return;
+        }
+        while (!stack.isEmpty()) {
+            int count = Math.min(stack.getCount(), stack.getMaxStackSize());
+            ItemStack part = stack.copy();
+            part.setCount(count);
+            InoriLootCompatibility.insert(inventory, part);
+            stack.shrink(count - part.getCount());
+            if (!part.isEmpty()) return;
+        }
     }
 
     private static MenuState clearSlotsKeepCarried(MenuState state) {
@@ -335,6 +357,8 @@ public final class EconomyService implements AutoCloseable {
         if (!result.isEmpty()) result.append(", ");
         if (prefix != null) result.append(prefix).append(": ");
         result.append(ForgeRegistries.ITEMS.getKey(stack.getItem())).append(" x").append(stack.getCount());
+        var lootId = InoriLootItems.id(stack);
+        if (lootId != null) result.append(" [").append(lootId).append(']');
     }
 
     private static int retainedItemCount(MenuState state) {

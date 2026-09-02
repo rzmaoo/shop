@@ -1,6 +1,8 @@
 package com.rzmao.shop.menu;
 
 import com.rzmao.shop.EconomyService;
+import com.rzmao.shop.compat.InoriLootCompatibility;
+import com.rzmao.shop.compat.InoriLootItems;
 import com.rzmao.shop.storage.MenuKind;
 import com.rzmao.shop.storage.MenuState;
 import com.rzmao.shop.text.ShopText;
@@ -30,6 +32,8 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
     protected final SimpleContainer controls;
     private boolean fatal;
     private boolean busy;
+    private boolean handlingGridAction;
+    private boolean gridRecovery;
     private long lastControlNanos;
     private long lastMutationNanos;
 
@@ -39,6 +43,7 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
         this.service = service;
         this.player = (ServerPlayer) inventory.player;
         this.kind = kind;
+        this.gridRecovery = InoriLootCompatibility.enabled() && !InoriLootCompatibility.valid(initial.slots());
         this.inputs = new SimpleContainer(kind.inputSlots());
         this.controls = new SimpleContainer(GUI_SLOTS - kind.inputSlots());
         for (int i = 0; i < kind.inputSlots(); i++) inputs.setItem(i, initial.slots().get(i).copy());
@@ -47,7 +52,8 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
             int x = 8 + (slot % 9) * 18;
             int y = 18 + (slot / 9) * 18;
             if (slot < kind.inputSlots()) {
-                addSlot(new InputSlot(inputs, slot, x, y, validator));
+                addSlot(new InputSlot(inputs, slot, x, y,
+                        stack -> !gridRecovery && !InoriLootItems.isPlaceholder(stack) && validator.test(stack)));
             } else {
                 addSlot(new LockedSlot(controls, slot - kind.inputSlots(), x, y));
             }
@@ -55,6 +61,60 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
         addPlayerInventory(inventory);
         setCarried(initial.carried());
         refreshControls();
+    }
+
+    public final void initializeGrid() {
+        if (!InoriLootCompatibility.enabled()) return;
+        List<ItemStack> arrangedInputs = InoriLootCompatibility.arrange(snapshot().slots());
+        List<ItemStack> arrangedInventory = InoriLootCompatibility.arrange(
+                InoriLootCompatibility.gridStacks(player.getInventory()));
+        if (arrangedInputs == null || arrangedInventory == null) {
+            player.sendSystemMessage(ShopText.text("shop.compat.inoriloot.recovery"));
+        }
+        if (arrangedInventory != null) {
+            durableMutation(() -> {
+                if (arrangedInputs != null) {
+                    for (int i = 0; i < arrangedInputs.size(); i++) inputs.setItem(i, arrangedInputs.get(i).copy());
+                }
+                for (int cell = 0; cell < arrangedInventory.size(); cell++) {
+                    player.getInventory().setItem(cell < 27 ? cell + 9 : cell - 27, arrangedInventory.get(cell).copy());
+                }
+            });
+        }
+        InoriLootCompatibility.sync(player);
+    }
+
+    public final int gridRows() {
+        return gridRecovery ? 0 : kind.inputSlots() / 9;
+    }
+
+    public final boolean isHandlingGridAction() {
+        return handlingGridAction;
+    }
+
+    public final void handleGridAction(Object packet) {
+        if (busy || fatal || player.containerMenu != this) return;
+        if (!InoriLootCompatibility.isCurrentAction(packet, containerId)) return;
+        if (!InoriLootCompatibility.permits(packet)) {
+            player.sendSystemMessage(ShopText.text("shop.common.no_drop"));
+            service.auditRejected(player, kind.name() + "_MOVE", "禁止的多格操作", "InoriLoot");
+            broadcastFullState();
+            InoriLootCompatibility.sync(player);
+            return;
+        }
+        long now = System.nanoTime();
+        if (now - lastMutationNanos < 100_000_000L) {
+            broadcastFullState();
+            InoriLootCompatibility.sync(player);
+            return;
+        }
+        lastMutationNanos = now;
+        handlingGridAction = true;
+        try {
+            durableMutation(() -> InoriLootCompatibility.handle(player, packet));
+        } finally {
+            handlingGridAction = false;
+        }
     }
 
     private void addPlayerInventory(Inventory inventory) {
@@ -95,22 +155,24 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
         List<ItemStack> inventoryBefore = snapshotInventory();
         try {
             super.clicked(slotId, button, clickType, ignored);
+            validateGridMutation();
             MenuState after = snapshot();
             if (!sameState(before, after) || !sameInventory(inventoryBefore)) {
                 service.persistMenuMutation(player, kind, before, after);
             }
-            refreshControls();
-            broadcastChanges();
         } catch (EconomyService.RecoverableMutationException ex) {
             restore(before, inventoryBefore);
             player.sendSystemMessage(ShopText.text("shop.common.move_reverted"));
             service.auditRejected(player, kind.name() + "_MOVE", "数据库写入失败", ex.getMessage());
+            return;
         } catch (EconomyService.FatalMutationException ex) {
             fatal = true;
+            return;
         } catch (RuntimeException ex) {
             restore(before, inventoryBefore);
             throw ex;
         }
+        refreshState(false);
     }
 
     protected final void durableMutation(Runnable mutation) {
@@ -119,18 +181,29 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
         MenuState before = snapshot();
         List<ItemStack> inventoryBefore = snapshotInventory();
         try {
-            mutation.run();
-            MenuState after = snapshot();
-            if (!sameState(before, after) || !sameInventory(inventoryBefore)) {
-                service.persistMenuMutation(player, kind, before, after);
+            try {
+                mutation.run();
+                validateGridMutation();
+                MenuState after = snapshot();
+                if (!sameState(before, after) || !sameInventory(inventoryBefore)) {
+                    service.persistMenuMutation(player, kind, before, after);
+                }
+            } catch (EconomyService.RecoverableMutationException ex) {
+                restore(before, inventoryBefore);
+                player.sendSystemMessage(ShopText.text("shop.common.move_reverted"));
+                service.auditRejected(player, kind.name() + "_MOVE", "数据库写入失败", ex.getMessage());
+                return;
+            } catch (EconomyService.FatalMutationException ex) {
+                fatal = true;
+                return;
+            } catch (RuntimeException ex) {
+                restore(before, inventoryBefore);
+                player.sendSystemMessage(ShopText.text("shop.common.move_reverted"));
+                service.auditRejected(player, kind.name() + "_MOVE", ex.getMessage(), "物品移动已回滚");
+                return;
             }
-            refreshControls();
-            broadcastChanges();
-        } catch (EconomyService.RecoverableMutationException ex) {
-            restore(before, inventoryBefore);
-            player.sendSystemMessage(ShopText.text("shop.common.move_reverted"));
-        } catch (EconomyService.FatalMutationException ex) {
-            fatal = true;
+            // 数据库提交后只刷新界面；同步失败不能把已提交的物品恢复到旧位置。
+            refreshState(false);
         } finally {
             busy = false;
         }
@@ -140,13 +213,16 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
         durableMutation(() -> {
             if (!getCarried().isEmpty() && EconomyService.canFit(player.getInventory(), getCarried())) {
                 ItemStack carried = getCarried().copy();
-                if (player.getInventory().add(carried) && carried.isEmpty()) setCarried(ItemStack.EMPTY);
+                EconomyService.addToInventory(player.getInventory(), carried);
+                setCarried(carried);
             }
             for (int i = 0; i < inputs.getContainerSize(); i++) {
                 ItemStack stack = inputs.getItem(i);
                 if (stack.isEmpty() || !EconomyService.canFit(player.getInventory(), stack)) continue;
                 ItemStack moving = stack.copy();
-                if (player.getInventory().add(moving) && moving.isEmpty()) inputs.setItem(i, ItemStack.EMPTY);
+                EconomyService.addToInventory(player.getInventory(), moving);
+                // 即便另一个模组只接收了部分物品，也必须扣除已经返还的数量。
+                inputs.setItem(i, moving);
             }
         });
     }
@@ -154,8 +230,7 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
     protected final void applyCommittedState(MenuState state) {
         for (int i = 0; i < inputs.getContainerSize(); i++) inputs.setItem(i, state.slots().get(i).copy());
         setCarried(state.carried());
-        refreshControls();
-        broadcastChanges();
+        refreshState(false);
     }
 
     public final MenuState snapshot() {
@@ -174,7 +249,7 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
         if (index < kind.inputSlots()) {
             if (!moveItemStackTo(source, GUI_SLOTS, slots.size(), true)) return ItemStack.EMPTY;
         } else if (index >= GUI_SLOTS) {
-            if (!isAccepted(source) || !moveItemStackTo(source, 0, kind.inputSlots(), false)) return ItemStack.EMPTY;
+            if (gridRecovery || !isAccepted(source) || !moveItemStackTo(source, 0, kind.inputSlots(), false)) return ItemStack.EMPTY;
         } else {
             return ItemStack.EMPTY;
         }
@@ -220,8 +295,22 @@ public abstract class EconomyMenu extends AbstractContainerMenu {
         for (int i = 0; i < inputs.getContainerSize(); i++) inputs.setItem(i, state.slots().get(i).copy());
         setCarried(state.carried());
         for (int i = 0; i < inventory.size(); i++) player.getInventory().setItem(i, inventory.get(i).copy());
+        refreshState(true);
+    }
+
+    private void validateGridMutation() {
+        if (!InoriLootCompatibility.enabled()) return;
+        if ((!gridRecovery && !InoriLootCompatibility.valid(snapshot().slots()))
+                || !InoriLootCompatibility.valid(player.getInventory())) {
+            throw new IllegalStateException("多格物品放置越界或重叠");
+        }
+    }
+
+    private void refreshState(boolean full) {
+        if (InoriLootCompatibility.enabled()) gridRecovery = !InoriLootCompatibility.valid(snapshot().slots());
         refreshControls();
-        broadcastFullState();
+        if (full) broadcastFullState(); else broadcastChanges();
+        InoriLootCompatibility.sync(player);
     }
 
     private boolean sameInventory(List<ItemStack> before) {

@@ -3,6 +3,7 @@ package com.rzmao.shop.config;
 import com.electronwill.nightconfig.core.Config;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
 import com.rzmao.shop.money.Money;
+import com.rzmao.shop.compat.InoriLootItems;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.item.Item;
@@ -66,9 +67,13 @@ public final class EconomyConfig {
             #   1. 不能配置 air 等不存在的物品，同一个物品不能重复配置
             #   2. 价格不能大于 maxBalance
             #   3. 如果把ATM实体货币也加进去，出售价格不能高于 atm.valuePerItem，否则会无限套利
+            #   4. InoriLoot 插件物品可用 inoriloot:<items 配置中的 ID> 单独定价，优先于原版材质价格。
+            #      未单独定价时沿用材质价格；搜索中或锁定的占位物品不能出售、存入 ATM。
+            #      多格兼容自动启用，无需增加开关，物品旋转不影响售价。
             prices = [
               # { item = "minecraft:diamond", price = "25.00" },
               # { item = "minecraft:emerald", price = "10.00" },
+              # { item = "inoriloot:example_item", price = "12.50" },
             ]
 
             # 操作反馈音效（必须填写原版或已安装 Mod 注册的声音事件 ID）
@@ -216,13 +221,14 @@ public final class EconomyConfig {
                         throw new IllegalArgumentException("prices 中存在无效条目");
                     }
                     ResourceLocation id = parseId(require(priceConfig, "item", String.class), "价格物品");
-                    Item pricedItem = requireRegisteredItem(id, "价格物品");
+                    // 插件 ID 存在物品的 PDC 中，并不是 Forge 注册物品。
+                    Item pricedItem = id.getNamespace().equals("inoriloot") ? null : requireRegisteredItem(id, "价格物品");
                     long price = Money.parse(require(priceConfig, "price", String.class), false);
                     if (price > maxBalance) {
                         throw new IllegalArgumentException("物品单价不能大于最大余额: " + id);
                     }
                     try {
-                        if (Money.multiply(price, new ItemStack(pricedItem).getMaxStackSize()) > maxBalance) {
+                        if (Money.multiply(price, pricedItem == null ? 64 : new ItemStack(pricedItem).getMaxStackSize()) > maxBalance) {
                             throw new IllegalArgumentException("单组物品价格不能大于最大余额: " + id);
                         }
                     } catch (ArithmeticException ex) {
@@ -362,13 +368,17 @@ public final class EconomyConfig {
         }
 
         public OptionalLong price(ItemStack stack) {
+            if (stack.isEmpty() || InoriLootItems.isPlaceholder(stack)) return OptionalLong.empty();
+            ResourceLocation lootId = InoriLootItems.id(stack);
+            Long lootPrice = lootId == null ? null : prices.get(lootId);
+            if (lootPrice != null) return OptionalLong.of(lootPrice);
             ResourceLocation id = ForgeRegistries.ITEMS.getKey(stack.getItem());
             Long value = id == null ? null : prices.get(id);
             return value == null ? OptionalLong.empty() : OptionalLong.of(value);
         }
 
         public boolean isAtmItem(ItemStack stack) {
-            return !stack.isEmpty() && stack.is(atmItem);
+            return !stack.isEmpty() && !InoriLootItems.isPlaceholder(stack) && stack.is(atmItem);
         }
     }
 

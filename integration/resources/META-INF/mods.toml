@@ -1,0 +1,13 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="All Rights Reserved"
+[[mods]]
+modId="shop_compat_tests"
+version="1.0"
+displayName="Shop compatibility integration tests"
+[[dependencies.shop_compat_tests]]
+modId="shop"
+mandatory=true
+versionRange="[1.2,)"
+ordering="AFTER"
+side="SERVER"

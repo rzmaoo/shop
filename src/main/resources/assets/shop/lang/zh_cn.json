@@ -38,6 +38,7 @@
   "shop.common.unavailable": "暂时无法使用",
   "shop.common.contact_admin": "请稍后重试或联系管理员",
   "shop.common.move_reverted": "操作失败，物品已放回原位，请重试",
+  "shop.compat.inoriloot.recovery": "旧物品暂时无法全部排入多格布局，请先取回或出售托管物品，并整理背包；装不下的物品会继续保留",
   "shop.common.no_drop": "这里不能丢弃或复制物品，请先取回到背包",
   "shop.common.reload_closed": "商店设置已更新，请重新打开界面。你放入的物品仍然保留",
   "shop.common.recovery_disconnect": "经济数据恢复失败。为保护你的物品和余额，本次登录已停止，请联系管理员",

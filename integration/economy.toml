@@ -1,0 +1,14 @@
+schemaVersion = 1
+maxBalance = "1000000.00"
+prices = [
+  { item = "minecraft:diamond", price = "25.00" },
+  { item = "minecraft:paper", price = "1.00" },
+  { item = "inoriloot:relic", price = "10.00" },
+]
+
+[backup]
+intervalSeconds = 0
+
+[atm]
+item = "minecraft:gold_ingot"
+valuePerItem = "1.00"
